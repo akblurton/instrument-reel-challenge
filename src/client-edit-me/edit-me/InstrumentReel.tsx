@@ -5,9 +5,10 @@
 /**
  * ✅ You can add/edit these imports
  */
-import { InstrumentSymbol } from "../../common-leave-me";
+import { Instrument, InstrumentSymbol } from "../../common-leave-me";
 import { InstrumentSocketClient } from "./InstrumentSocketClient";
 import "./InstrumentReel.css";
+import { useEffect, useState } from "react";
 
 /**
  * ❌ Please do not edit this
@@ -21,6 +22,19 @@ function useInstruments(instrumentSymbols: InstrumentSymbol[]) {
   /**
    * ✅ You can edit inside the body of this hook
    */
+  const [instrumentData, setInstrumentData] = useState<Instrument[] | null>(
+    null
+  );
+  const cacheKey = instrumentSymbols.join(",");
+  useEffect(() => {
+    const stream = client.subscribe(instrumentSymbols);
+    stream.listen((instruments) => {
+      setInstrumentData(instruments);
+    });
+    return () => stream.unsubscribe();
+  }, [cacheKey]);
+
+  return instrumentData;
 }
 
 export interface InstrumentReelProps {
@@ -37,6 +51,8 @@ function InstrumentReel({ instrumentSymbols }: InstrumentReelProps) {
    * ✅ You can edit from here down in this component.
    * Please feel free to add more components to this file or other files if you want to.
    */
+
+  return <pre>{JSON.stringify(instruments, null, 2)}</pre>;
 
   return <div>Instrument Reel</div>;
 }
