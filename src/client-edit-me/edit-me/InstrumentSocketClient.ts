@@ -14,6 +14,10 @@ import {
   WebSocketServerMessageJson,
 } from "../../common-leave-me";
 
+export type InstrumentWithChange = Instrument & {
+  change: number;
+};
+
 /**
  * Notes:
  *
@@ -37,7 +41,7 @@ import {
     };
  */
 
-type InstrumentMessageHandler = (msg: Instrument[]) => void;
+type InstrumentMessageHandler = (msg: InstrumentWithChange[]) => void;
 
 /**
  * ❌ Please do not edit this class name
@@ -57,6 +61,15 @@ export class InstrumentSocketClient {
 
   // Keep track of active subscriptions for each symbol
   private _subscriptions = new Map<InstrumentSymbol, number>();
+  // Hold current subscription
+  private _activeSubscription: {
+    symbols: string;
+    unsubscribe: () => void;
+  } | null = null;
+
+  // Keep hold of last known values for diff calculation
+  private _lastValue = new Map<InstrumentSymbol, number>();
+  private _handlers: InstrumentMessageHandler[] = [];
 
   constructor() {
     /**
@@ -75,6 +88,9 @@ export class InstrumentSocketClient {
     this._socket.addEventListener("close", () => {
       this._connected = false;
     });
+
+    // Setup listener
+    this._listen();
   }
 
   private _processBuffer() {
@@ -96,11 +112,37 @@ export class InstrumentSocketClient {
     this._socket.send(JSON.stringify(message));
   }
 
-  private _listen(handler: (msg: WebSocketServerMessageJson) => void) {
+  private _listen() {
     const listener = (e: MessageEvent<string>) => {
       try {
         const parsed = JSON.parse(e.data) as WebSocketServerMessageJson;
-        handler(parsed);
+        // Only process known message types
+        if (parsed.type !== "update") {
+          return;
+        }
+
+        const result = parsed.instruments.map((instrument) => {
+          let change = 0;
+          if (this._lastValue.has(instrument.code)) {
+            change =
+              this._lastValue.get(instrument.code)! - instrument.lastQuote;
+          }
+
+          // A 0 change could be from multiple subscriptions,
+          // or data that hasn't changed, ignore it
+          if (change || !this._lastValue.has(instrument.code)) {
+            this._lastValue.set(instrument.code, instrument.lastQuote);
+          }
+
+          return {
+            ...instrument,
+            change,
+          } as InstrumentWithChange;
+        });
+
+        for (const handler of this._handlers) {
+          handler(result);
+        }
       } catch (e) {
         // Ignore any invalid data parsing
         // We're also not doing any runtime type checking so we're assuming
@@ -114,14 +156,49 @@ export class InstrumentSocketClient {
     };
   }
 
+  // Handle subscribing to our socket, re-using the connection for any
+  // new or removed symbols
+  private _sync() {
+    const activeSymbols = this._activeSubscription?.symbols ?? "";
+    // Look at every active symbol subscription we have and compress into a set
+    const nextSymbols = Array.from(this._subscriptions.entries()).reduce(
+      (arr, [symbol, count]: [InstrumentSymbol, number]) => {
+        if (count === 0) {
+          return arr;
+        }
+
+        return [...arr, symbol];
+      },
+      [] as InstrumentSymbol[]
+    );
+
+    if (nextSymbols.join(",") === activeSymbols) {
+      // No change to our total subscription count ignore
+      return;
+    }
+
+    this._activeSubscription?.unsubscribe();
+    this._activeSubscription = {
+      symbols: nextSymbols.join(","),
+      unsubscribe: () => {
+        this._send({
+          type: "unsubscribe",
+          instrumentSymbols: nextSymbols,
+        });
+      },
+    };
+
+    this._send({
+      type: "subscribe",
+      instrumentSymbols: nextSymbols,
+    });
+
+    const symbols: InstrumentSymbol[] = [];
+  }
+
   subscribe(instrumentSymbols: InstrumentSymbol[]) {
     // Keep  a copy of our symbols (prevent accidental tamper)
     const symbols = [...instrumentSymbols];
-    this._send({
-      type: "subscribe",
-      instrumentSymbols,
-    });
-
     // Update subscription records
     for (const symbol of symbols) {
       if (!this._subscriptions.has(symbol)) {
@@ -130,35 +207,29 @@ export class InstrumentSocketClient {
       const current = this._subscriptions.get(symbol) ?? 0;
       this._subscriptions.set(symbol, current + 1);
     }
+    this._sync();
 
     // "syncronous" flag to disable any state updates upstream immediately
     // on unsubscribe
+
+    let handler: InstrumentMessageHandler | null = null;
+    // Internal handler that checks subscribed flag to immediately cancel any
+    // state behaviours
     let subscribed = true;
-    let handler: InstrumentMessageHandler | undefined = void 0;
-
-    const unlisten = this._listen((msg) => {
-      if (!subscribed) {
-        return;
+    const internalHandler: InstrumentMessageHandler = (data) => {
+      if (subscribed) {
+        // Filter down to only the symbols requested
+        handler?.(data.filter(({ code }) => symbols.includes(code)));
       }
-
-      // Only process known message types
-      if (msg.type !== "update") {
-        return;
-      }
-
-      // Filter out any data we've not requested for this subscription
-      handler?.(msg.instruments.filter((inst) => symbols.includes(inst.code)));
-    });
-
+    };
     return {
       listen: (fn: InstrumentMessageHandler) => {
         handler = fn;
+        this._handlers.push(internalHandler);
       },
       unsubscribe: () => {
         subscribed = false;
-        unlisten();
-
-        const unsubSymbols: InstrumentSymbol[] = [];
+        this._handlers = this._handlers.filter((h) => h !== internalHandler);
         // Update subscription records
         for (const symbol of symbols) {
           // Shouldn't ever happen, but just in case
@@ -168,14 +239,12 @@ export class InstrumentSocketClient {
           const next = Math.max((this._subscriptions.get(symbol) ?? 0) - 1, 0);
           this._subscriptions.set(symbol, next);
           if (next === 0) {
-            unsubSymbols.push(symbol);
+            // Don't store last known value of a completely unsubscribed
+            // value in case we end up seeing extreme change
+            this._lastValue.delete(symbol);
           }
         }
-
-        this._send({
-          type: "unsubscribe",
-          instrumentSymbols: unsubSymbols,
-        });
+        this._sync();
       },
     };
   }
