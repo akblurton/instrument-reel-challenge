@@ -21,7 +21,7 @@ const InstrumentReelItems = ({
         <div className="InstrumentReel__item" key={instrument.code}>
           <div className="InstrumentReel__item__icon">
             <img
-              src={`/public/${instrument.category}/${instrument.code}.svg`}
+              src={`/${instrument.category}/${instrument.code}.svg`}
               className=""
             />
           </div>
