@@ -26,6 +26,9 @@ function useInstruments(instrumentSymbols: InstrumentSymbol[]) {
   /**
    * ✅ You can edit inside the body of this hook
    */
+  // NOTE: You may notice that ws:// sub/unsub events are triggered twice
+  // this is due to React.StrictMode used in leave-me/main.tsx
+  // https://react.dev/reference/react/StrictMode#fixing-bugs-found-by-double-rendering-in-development
   const [instrumentData, setInstrumentData] = useState<
     InstrumentWithChange[] | null
   >(null);
