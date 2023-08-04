@@ -62,6 +62,8 @@ function InstrumentReel({ instrumentSymbols }: InstrumentReelProps) {
   // Without a unique idenifier to give to `key` at the root of this node,
   // react's DOM manipulation messes up with flex-box in a bad way if it
   // tries to delete a carousel off the start<->middle of the stack.
+  // Note: can be fixed by using ID property in parent data in App.tsx rather
+  // than index to generate parent div.tt-wrapper
   const id = useId();
 
   // We need at least 10 items to be able to fill the carousel in a infinite way
@@ -77,6 +79,14 @@ function InstrumentReel({ instrumentSymbols }: InstrumentReelProps) {
 
   // I wish this were simpler, but ES3/4 array compatibility is weird
   const iter = Array.from(Array(loops).keys());
+
+  // Slightly bypasses bug (remove UI still visible) present in parent component
+  // where boolean logic is used against an array when validating data,
+  // see App.tsx:52 `if (instrumentSymbols)`
+  if (!instrumentSymbols.length) {
+    return null;
+  }
+
   return (
     <div className="InstrumentReel" key={id}>
       {instruments === null ? (
