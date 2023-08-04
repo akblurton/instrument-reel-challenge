@@ -176,8 +176,13 @@ export class InstrumentSocketClient {
       // No change to our total subscription count ignore
       return;
     }
-
     this._activeSubscription?.unsubscribe();
+
+    if (!nextSymbols.length) {
+      this._activeSubscription = null;
+      return;
+    }
+
     this._activeSubscription = {
       symbols: nextSymbols.join(","),
       unsubscribe: () => {
